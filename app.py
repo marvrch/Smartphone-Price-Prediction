@@ -30,7 +30,7 @@ st.caption(f"Model: **{meta['model_name']}** • y transform: "
 VARIANTS = [
     ("ultra", 5),
     ("pro max", 5), ("promax", 5), ("max pro", 5),
-    ("pro plus", 4), ("pro+", 4), ("pro", 4),
+    ("pro plus", 4), ("pro+", 4), ("pro", 3),
     ("max", 2), ("plus", 2),
     ("se", 1), ("mini", 1), ("fe", 1), ("lite", 1),
 ]
@@ -81,7 +81,7 @@ for c in cat_cols:
     if len(choices) > 80:
         # large vocab → free text with autocomplete-like behavior
         default = choices[0] if choices else ""
-        inputs[c] = st.sidebar.text_input(c, value=default)
+        inputs[c] = st.sidebar.text_input(c, value=default).strip().lower()
     else:
         inputs[c] = st.sidebar.selectbox(c, options=choices if choices else [""], format_func=proper)
 
