@@ -12,6 +12,7 @@ st.title("📱 Smartphone Price Predictor")
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "artifacts" / "model.pkl"
 META_PATH  = BASE_DIR / "artifacts" / "meta.json"
+BRAND_MODEL_CSV = BASE_DIR/ "phone_brand_model_list.csv"
 
 # ---------- helpers ----------
 @st.cache_resource
@@ -20,6 +21,36 @@ def load_assets():
     with open("artifacts/meta.json","r",encoding="utf-8") as f:
         meta = json.load(f)
     return model, meta
+
+def load_brand_model_map(path=BRAND_MODEL_CSV):
+    """
+    Load brand→[models] mapping from a 2-column CSV (brand, model).
+    Values are normalized to lowercase for consistency with the pipeline.
+    Falls back to meta choices when the file isn't available.
+    """
+    try:
+        df = pd.read_csv(path)
+        # normalize
+        df['brand'] = df['brand'].astype(str).str.strip().str.lower()
+        df['model'] = df['model'].astype(str).str.strip().str.lower()
+        # drop missing/dupe pairs and build map
+        df = df.dropna(subset=['brand','model']).drop_duplicates()
+        mapping = (
+            df.groupby('brand')['model']
+              .apply(lambda x: sorted(set(x)))
+              .to_dict()
+        )
+        brand_choices = sorted(mapping.keys())
+        all_models = sorted(set(df['model']))
+        return mapping, brand_choices, all_models
+    except Exception:
+        # fallback to meta if CSV missing on cloud
+        brands = sorted(set(str(x).strip().lower()
+                            for x in meta.get("choices", {}).get("brand", [])))
+        models = sorted(set(str(x).strip().lower()
+                            for x in meta.get("choices", {}).get("model", [])))
+        mapping = {b: models for b in brands}
+        return mapping, brands, models
 
 model, meta = load_assets()
 st.caption(f"Model: **{meta['model_name']}** • y transform: "
@@ -73,17 +104,31 @@ inputs = {}
 
 # 1) Categorical (non-binary)
 cat_cols = (meta.get("cat_low_features", []) + meta.get("cat_high_features", []))
-# Make sure binary_features are NOT included here:
 cat_cols = [c for c in cat_cols if c not in set(meta.get("binary_features", []))]
+cat_cols = [c for c in cat_cols if c.lower() not in ("brand", "model")]  # <-- exclude here
 
+# --- Dependent dropdown: brand -> model ---
+brand_model_map, brand_choices, all_models = load_brand_model_map()
+
+# Brand dropdown
+brand_sel = st.sidebar.selectbox("brand", options=brand_choices, format_func=proper)
+inputs["brand"] = str(brand_sel).strip().lower()
+
+# Model dropdown depends on brand
+model_options = brand_model_map.get(inputs["brand"], all_models)
+model_sel = st.sidebar.selectbox("model", options=model_options, format_func=proper)
+inputs["model"] = str(model_sel).strip().lower()
+
+# --- Other categorical columns (if any) ---
 for c in cat_cols:
     choices = meta.get("choices", {}).get(c, [])
     if len(choices) > 80:
-        # large vocab → free text with autocomplete-like behavior
         default = choices[0] if choices else ""
         inputs[c] = st.sidebar.text_input(c, value=default).strip().lower()
     else:
-        inputs[c] = st.sidebar.selectbox(c, options=choices if choices else [""], format_func=proper)
+        sel = st.sidebar.selectbox(c, options=choices if choices else [""], format_func=proper)
+        inputs[c] = str(sel).strip().lower()
+
 
 # 2) Numeric (RAM / Storage as dropdown of unique values if provided)
 
@@ -150,7 +195,7 @@ if st.button("Prediksi Harga"):
 
     # Ensure strings for categorical columns
     for c in cat_cols:
-        X[c] = X[c].astype(str).fillna("")
+        X[c] = X[c].astype(str).str.strip().str.lower().fillna("")
 
     # Predict (pipeline handles all preprocessing)
     y_pred = model.predict(X)
